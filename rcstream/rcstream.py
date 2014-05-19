@@ -34,6 +34,7 @@ from gevent import monkey
 monkey.patch_all()
 
 import argparse
+import fnmatch
 import json
 import logging
 import sys
@@ -46,6 +47,22 @@ import socketio.server
 
 
 log = logging.getLogger(__name__)
+
+
+def parse_address(addr):
+    """Parse a 'host:port' string into a (host: str, port: int) tuple."""
+    host, port = addr.split(':')
+    return host, int(port)
+
+
+def match_any(string, patterns):
+    """Test a collection of Unix shell-style patterns against a string."""
+    return any(fnmatch.fnmatch(string, pattern) for pattern in patterns)
+
+
+def subscription_sort_key(pattern):
+    """Sort key for subscriptions that puts shorter wildcard patterns ahead."""
+    return (len(pattern), '*' not in pattern, pattern)
 
 
 class WsgiBackendLogAdapter(logging.LoggerAdapter):
@@ -63,10 +80,10 @@ class WikiNamespace(socketio.namespace.BaseNamespace):
     """A socket.io namespace that allows clients to subscribe to the
     recent changes stream of individual wikis."""
 
-    MAX_SUBSCRIPTIONS = 100
+    MAX_SUBSCRIPTIONS = 10
 
     def initialize(self):
-        self.session['wikis'] = set()
+        self.session['wikis'] = []
         self.logger = WsgiBackendLogAdapter(log, self.environ)
 
     def process_packet(self, packet):
@@ -84,16 +101,18 @@ class WikiNamespace(socketio.namespace.BaseNamespace):
                 continue
             if len(subscriptions) >= self.MAX_SUBSCRIPTIONS:
                 return self.error('subscribe_error', 'Too many subscriptions')
-            subscriptions.add(wiki)
+            subscriptions.append(wiki)
+            subscriptions.sort(key=subscription_sort_key)
 
     def on_unsubscribe(self, wikis):
         if not isinstance(wikis, list):
             wikis = [wikis]
         subscriptions = self.session['wikis']
         for wiki in wikis:
-            if not isinstance(wiki, basestring):
-                continue
-            subscriptions.discard(wiki)
+            try:
+                subscriptions.remove(wiki)
+            except ValueError:
+                pass
 
 
 class ChangesPubSub(socketio.server.SocketIOServer):
@@ -131,8 +150,7 @@ class ChangesPubSub(socketio.server.SocketIOServer):
             wiki = change['server_name']
             event = dict(base_event, args=(change,))
             for client in self.sockets.values():
-                subscriptions = client.session.get('wikis', ())
-                if '*' in subscriptions or wiki in subscriptions:
+                if match_any(wiki, client.session.get('wikis', ())):
                     client.send_packet(event)
 
     def subscribe(self):
@@ -142,11 +160,6 @@ class ChangesPubSub(socketio.server.SocketIOServer):
             if message['type'] == 'pmessage':
                 data = json.loads(message['data'])
                 self.queue.put(data)
-
-
-def parse_address(addr):
-    host, port = addr.split(':')
-    return host, int(port)
 
 
 arg_parser = argparse.ArgumentParser(
