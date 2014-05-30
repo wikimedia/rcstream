@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
   RCStream: Broadcast MediaWiki recent changes over WebSockets
