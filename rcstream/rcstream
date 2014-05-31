@@ -134,10 +134,20 @@ class ChangesPubSub(socketio.server.SocketIOServer):
             greenlet.start()
         super(ChangesPubSub, self).serve_forever()
 
+    def get_stats(self):
+        """Return a map with server metrics."""
+        return {
+            'connected_clients': len(self.sockets),
+            'queue_size': self.queue.qsize()
+        }
+
     def on_request(self, environ, start_response):
         """A WSGI application function."""
         if 'socketio' in environ:
             socketio.socketio_manage(environ, self.namespaces)
+        if environ.get('PATH_INFO', '').strip('/') == 'rcstream_status':
+            start_response('200 OK', [('Content-type', 'application/json')])
+            return [json.dumps(self.get_stats(), sort_keys=True)]
         start_response('404 Not Found', [])
         return ['404 Not Found']
 
