@@ -169,7 +169,11 @@ class ChangesPubSub(socketio.server.SocketIOServer):
         pubsub.psubscribe('rc.*')
         for message in pubsub.listen():
             if message['type'] == 'pmessage':
-                data = json.loads(message['data'])
+                try:
+                    data = json.loads(message['data'])
+                except ValueError:
+                    log.exception('Failed to decode: %(data)s' % message)
+                    continue
                 self.queue.put(data)
 
 
